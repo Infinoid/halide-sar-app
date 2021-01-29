@@ -83,9 +83,9 @@ public:
     // lsa, lsb, lsn: implicit linspace parameters (min, max, count)
     // fp: {N_fft, npulses}
     // output: {nu*nv, npulses}
-    inline Expr interp(Func xs, Expr lsa, Expr lsb, Expr lsn, ComplexFunc fp, Var c, Var x, Var y) {
+    inline Expr interp(Func xs, Expr lsa, Expr lsb, Expr lsn, ComplexFunc fp, Expr c, Expr x, Expr y, Expr z) {
         Expr lsr = (lsb-lsa) / (lsn-1);             // linspace rate of increase
-        Expr luts = (xs(x, y) - lsa) / lsr;         // input value scaled to linspace
+        Expr luts = (xs(x, y, z) - lsa) / lsr;      // input value scaled to linspace
         Expr lutl = ConciseCasts::i32(floor(luts)); // lower index
         Expr lutu = lutl + 1;                       // upper index
         Expr luto = luts - lutl;                    // offset within lower-upper span
@@ -95,7 +95,7 @@ public:
         Expr clu = clamp(lutu, 0, lsn - 1);
         Expr pos = clamp(luto, Expr(0.0), Expr(1.0));
 
-        return lerp(fp.inner(c, cll, y), fp.inner(c, clu, y), pos);
+        return lerp(fp.inner(c, cll, z), fp.inner(c, clu, z), pos);
     }
 
     void generate() {
@@ -167,56 +167,57 @@ public:
         out_norm_r0(pulse) = norm_r0(pulse);
 #endif
 
+        Expr pixel_from_xy = (nu * (nv - y - 1)) + x;
         // r - r0: produces shape {nu*nv, nd, npulses}
-        rr0(pixel, dim, pulse) = r(pixel, dim) - pos(dim, pulse);
+        rr0(x, y, dim, pulse) = r(pixel_from_xy, dim) - pos(dim, pulse);
 #if DEBUG_RR0
-        out_rr0(pixel, dim, pulse) = rr0(pixel, dim, pulse);
+        out_rr0(x, y, dim, pulse) = rr0(x, y, dim, pulse);
 #endif
 
         // norm(r - r0): produces shape {nu*nv, npulses}
-        norm_rr0(pixel, pulse) = Expr(0.0);
-        norm_rr0(pixel, pulse) += rr0(pixel, rnd, pulse) * rr0(pixel, rnd, pulse);
-        norm_rr0(pixel, pulse) = sqrt(norm_rr0(pixel, pulse));
+        norm_rr0(x, y, pulse) = Expr(0.0);
+        norm_rr0(x, y, pulse) += rr0(x, y, rnd, pulse) * rr0(x, y, rnd, pulse);
+        norm_rr0(x, y, pulse) = sqrt(norm_rr0(x, y, pulse));
 #if DEBUG_NORM_RR0
-        out_norm_rr0(pixel, pulse) = norm_rr0(pixel, pulse);
+        out_norm_rr0(x, y, pulse) = norm_rr0(x, y, pulse);
 #endif
 
         // dr_i: produces shape {nu*nv, npulses}
-        dr_i(pixel, pulse) = norm_r0(pulse) - norm_rr0(pixel, pulse);
+        dr_i(x, y, pulse) = norm_r0(pulse) - norm_rr0(x, y, pulse);
 #if DEBUG_DR_I
-        out_dr_i(pixel, pulse) = dr_i(pixel, pulse);
+        out_dr_i(pixel_from_xy, pulse) = dr_i(x, y, pulse);
 #endif
 
         // Q_hat: produces shape {nu*nv, npulses}
-        Q_hat.inner(c, pixel, pulse) = interp(dr_i, floor(-nsamples * delta_r / 2), floor(nsamples * delta_r / 2), N_fft, Q, c, pixel, pulse);
+        Q_hat.inner(c, x, y, pulse) = interp(dr_i, floor(-nsamples * delta_r / 2), floor(nsamples * delta_r / 2), N_fft, Q, c, x, y, pulse);
 #if DEBUG_Q_REAL
-        out_q_real(pixel, pulse) = Q_hat.inner(0, pixel, pulse);
+        out_q_real(pixel_from_xy, pulse) = Q_hat.inner(0, x, y, pulse);
 #endif
 #if DEBUG_Q_IMAG
-        out_q_imag(pixel, pulse) = Q_hat.inner(1, pixel, pulse);
+        out_q_imag(pixel_from_xy, pulse) = Q_hat.inner(1, x, y, pulse);
 #endif
 #if DEBUG_Q_HAT
-        out_q_hat(c, pixel, pulse) = Q_hat.inner(c, pixel, pulse);
+        out_q_hat(c, pixel_from_xy, pulse) = Q_hat.inner(c, x, y, pulse);
 #endif
 
         // k_c: produces scalar
         Expr k_c = k_r(nsamples / 2);
 
         // img: produces shape {nu*nv}
-        img(pixel) = ComplexExpr(c, Expr(0.0), Expr(0.0));
-        img(pixel) += Q_hat(pixel, rnpulses) * expj(c, -k_c * dr_i(pixel, rnpulses));
+        img(x, y) = ComplexExpr(c, Expr(0.0), Expr(0.0));
+        img(x, y) += Q_hat(x, y, rnpulses) * expj(c, -k_c * dr_i(x, y, rnpulses));
 #if DEBUG_IMG
-        out_img(c, pixel) = img.inner(c, pixel);
+        out_img(c, pixel_from_xy) = img.inner(c, x, y);
 #endif
 
         // finally...
-        fimg(pixel) = img(pixel) * expj(c, k_c * dr_i(pixel, npulses / 2));
+        fimg(x, y) = img(x, y) * expj(c, k_c * dr_i(x, y, npulses / 2));
 #if DEBUG_FIMG
-        out_fimg(c, pixel) = fimg.inner(c, pixel);
+        out_fimg(c, pixel_from_xy) = fimg.inner(c, x, y);
 #endif
 
         // output_img: produce shape {nu, nv}, but reverse row order
-        output_img(c, x, y) = fimg.inner(c, (nu * (nv - y - 1)) + x);
+        output_img(c, x, y) = fimg.inner(c, x, y);
     }
 
     void schedule() {
@@ -240,6 +241,7 @@ public:
                       << "Vector size: " << vectorsize.value() << std::endl;
             Var sample_vo{"sample_vo"}, sample_vi{"sample_vi"};
             Var pulse_vo{"pulse_vo"}, pulse_vi{"pulse_vi"};
+            Var y_vo{"y_vo"}, y_vi{"y_vi"};
             Var pixeli{"pixeli"}, block{"block"};
             win_sample.compute_root()
                       .vectorize(sample, vectorsize)
@@ -273,9 +275,9 @@ public:
             norm_rr0.compute_inline();
             dr_i.compute_inline();
             Q_hat.inner.compute_inline();
-            img.inner.compute_root().bound(c, 0, 2).unroll(c).gpu_tile(pixel, block, pixeli, blocksize);
-            img.inner.update(0).reorder(c, rnpulses, pixel).gpu_tile(pixel, block, pixeli, blocksize);
-            fimg.inner.compute_root().bound(c, 0, 2).unroll(c).gpu_tile(pixel, block, pixeli, blocksize);
+            img.inner.compute_root().bound(c, 0, 2).unroll(c).gpu_tile(y, y_vo, y_vi, blocksize);
+            img.inner.update(0).reorder(c, rnpulses, x, y).gpu_tile(y, y_vo, y_vi, blocksize);
+            fimg.inner.compute_root().bound(c, 0, 2).unroll(c).gpu_tile(y, y_vo, y_vi, blocksize);
             output_img.compute_root().bound(c, 0, 2).unroll(c).parallel(y).vectorize(x, vectorsize);
             if (print_loop_nest) {
                 output_img.print_loop_nest();
@@ -330,7 +332,7 @@ public:
             dr_i.compute_inline();
             Q_hat.inner.compute_inline();
             img.inner.compute_at(output_img, x_vo);
-            img.inner.update(0).reorder(c, pixel, rnpulses.x);
+            img.inner.update(0).reorder(c, x, y, rnpulses.x);
             fimg.inner.compute_inline();
             output_img.compute_root()
                       .split(x, x_vo, x_vi, vectorsize)
