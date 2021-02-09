@@ -21,6 +21,7 @@
 #include "backprojection.h"
 #include "backprojection_distributed.h"
 #include "backprojection_cuda.h"
+#include "backprojection_cuda_distributed.h"
 #include "backprojection_ritsar.h"
 #include "backprojection_ritsar_s.h"
 #include "backprojection_ritsar_p.h"
@@ -179,6 +180,10 @@ int main(int argc, char **argv) {
     } else if (bp_sched == "cuda") {
         backprojection_impl = backprojection_cuda;
         cout << "Using schedule with CUDA" << endl;
+    } else if (bp_sched == "cuda_distributed") {
+        backprojection_impl = backprojection_cuda_distributed;
+        is_distributed = true;
+        cout << "Using schedule for distributed CUDA" << endl;
     } else if (bp_sched == "ritsar") {
         backprojection_impl = backprojection_ritsar;
         cout << "Using RITSAR baseline (vectorize)" << endl;
