@@ -114,9 +114,9 @@ public:
         r = BoundaryConditions::constant_exterior(r_in, Expr(0.0));
 
         // Create window: produces shape {nsamples, npulses}
-        win_sample(sample) = taylor(nsamples, taylor_s_l, sample, "win_sample");
-        win_pulse(pulse) = taylor(npulses, taylor_s_l, pulse, "win_pulse");
-        win(sample, pulse) = win_sample(sample) * win_pulse(pulse);
+        win_sample = Taylor(nsamples, taylor_s_l, sample, "win_sample");
+        win_pulse = Taylor(npulses, taylor_s_l, pulse, "win_pulse");
+        win(sample, pulse) = win_sample.taylor(sample) * win_pulse.taylor(pulse);
 #if DEBUG_WIN
         out_win(sample, pulse) = win(sample, pulse);
 #endif
@@ -248,12 +248,28 @@ public:
             Var x_vo{"x_vo"}, x_vi{"x_vi"};
             Var y_vo{"y_vo"}, y_vi{"y_vi"};
             Var pixeli{"pixeli"}, block{"block"};
-            win_sample.compute_root()
+            win_sample.taylor.compute_root()
                       .vectorize(sample, vectorsize)
                       .parallel(sample, blocksize);
-            win_pulse.compute_root()
+            win_sample.w.compute_root()
+                      .split(sample, sample_vo, sample_vi, 4)
+                      .vectorize(sample_vi)
+                      .parallel(sample_vo);
+            win_sample.w.update(0)
+                      .split(sample, sample_vo, sample_vi, 4, TailStrategy::GuardWithIf)
+                      .vectorize(sample_vi)
+                      .parallel(sample_vo);
+            win_pulse.taylor.compute_root()
                      .vectorize(pulse, vectorsize)
                      .parallel(pulse, blocksize);
+            win_pulse.w.compute_root()
+                     .split(pulse, pulse_vo, pulse_vi, 4)
+                     .vectorize(pulse_vi)
+                     .parallel(pulse_vo);
+            win_pulse.w.update(0)
+                     .split(pulse, pulse_vo, pulse_vi, 4, TailStrategy::GuardWithIf)
+                     .vectorize(pulse_vi)
+                     .parallel(pulse_vo);
             win.compute_root();
             filt.compute_root();
             phs_filt.inner.compute_root();
@@ -319,12 +335,28 @@ public:
             Var y_vo{"y_vo"}, y_vi{"y_vi"};
             Var sample_vo{"sample_vo"}, sample_vi{"sample_vi"};
             Var pulse_vo{"pulse_vo"}, pulse_vi{"pulse_vi"};
-            win_sample.compute_root()
+            win_sample.taylor.compute_root()
                       .vectorize(sample, vectorsize)
                       .parallel(sample, blocksize);
-            win_pulse.compute_root()
+            win_sample.w.compute_root()
+                      .split(sample, sample_vo, sample_vi, 4)
+                      .vectorize(sample_vi)
+                      .parallel(sample_vo);
+            win_sample.w.update(0)
+                      .split(sample, sample_vo, sample_vi, 4, TailStrategy::GuardWithIf)
+                      .vectorize(sample_vi)
+                      .parallel(sample_vo);
+            win_pulse.taylor.compute_root()
                      .vectorize(pulse, vectorsize)
                      .parallel(pulse, blocksize);
+            win_pulse.w.compute_root()
+                     .split(pulse, pulse_vo, pulse_vi, 4)
+                     .vectorize(pulse_vi)
+                     .parallel(pulse_vo);
+            win_pulse.w.update(0)
+                     .split(pulse, pulse_vo, pulse_vi, 4, TailStrategy::GuardWithIf)
+                     .vectorize(pulse_vi)
+                     .parallel(pulse_vo);
             win.compute_root();
             filt.compute_root();
             phs_filt.inner.compute_root();
@@ -386,8 +418,7 @@ private:
     Var x{"x"}, y{"y"};
     Var c{"c"}, sample{"sample"}, pixel{"pixel"}, pulse{"pulse"}, dim{"dim"};
 
-    Func win_sample{"win_sample"};
-    Func win_pulse{"win_pulse"};
+    Taylor win_sample, win_pulse;
     Func win{"win"};
     Func filt{"filt"};
     ComplexFunc phs_filt{c, "phs_filt"};
